@@ -14,7 +14,7 @@ const PLANE_HEIGHT = 1.7 // 竖直图像平面高度
 const SAMPLES = [
   { id: 'temple-of-heaven', name: '天坛', file: 'temple-of-heaven.webp' },
   { id: 'color-orb', name: '彩色圆盘', file: 'color-orb.webp' },
-  { id: 'japanese-castle', name: '日本城堡', file: 'japanese-castle.webp' },
+  { id: 'miboooo', name: 'Miboooo', file: 'miboooo.png' },
   { id: 'notre-dame', name: '巴黎圣母院', file: 'notre-dame.webp' },
 ].map((s) => ({ ...s, url: `${import.meta.env.BASE_URL}samples/${s.file}` }))
 
