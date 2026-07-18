@@ -359,7 +359,12 @@ export default function Home() {
                   {mode === 'lathe' ? '由轮廓决定' : `${Math.round(maxDepth * 100)}mm`}
                 </span>
               </div>
-              <Slider value={[maxDepth]} onValueChange={([v]) => setMaxDepth(v)} min={0.25} max={0.75} step={0.05} />
+              <Slider value={[maxDepth]} onValueChange={([v]) => setMaxDepth(v)} min={0.2} max={1.4} step={0.05} />
+              {resolution >= 96 && maxDepth > 0.5 && (
+                <div className="font-mono2 text-[9px] text-muted-foreground mt-1">
+                  96 精度下深度将受体素预算自动约束
+                </div>
+              )}
             </div>
 
             <div className="mb-4">
