@@ -13,9 +13,8 @@ const PLANE_HEIGHT = 1.7 // 竖直图像平面高度
 
 const SAMPLES = [
   { id: 'temple-of-heaven', name: '天坛', file: 'temple-of-heaven.webp' },
-  { id: 'forbidden-city', name: '故宫', file: 'forbidden-city.webp' },
   { id: 'color-orb', name: '彩色圆盘', file: 'color-orb.webp' },
-  { id: 'japanese-castle', name: '日本城堡', file: 'japanese-castle.webp' },
+  { id: 'miboooo', name: 'Miboooo', file: 'miboooo.png' },
   { id: 'notre-dame', name: '巴黎圣母院', file: 'notre-dame.webp' },
 ].map((s) => ({ ...s, url: `${import.meta.env.BASE_URL}samples/${s.file}` }))
 
@@ -424,7 +423,7 @@ export default function Home() {
                 <span className="font-mono2 text-[9px] tracking-[0.2em] text-muted-foreground">示例图库 SAMPLES</span>
                 <span className="font-mono2 text-[9px] text-muted-foreground/50">点击即印</span>
               </div>
-              <div className="grid grid-cols-6 gap-1.5">
+              <div className="grid grid-cols-5 gap-1.5">
                 {SAMPLES.map((s) => (
                   <button
                     key={s.id}
