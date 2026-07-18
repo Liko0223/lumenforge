@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import MachineScene, { type MachineStatus, type HudScreen } from '../components/MachineScene'
 import Terminal from '../components/Terminal'
 import BootOverlay from '../components/BootOverlay'
-import { sliceImage, loadImage, type PrintJob, type FormMode } from '../lib/voxel'
+import { sliceImage, sliceHull, loadImage, type PrintJob, type FormMode, type ViewKey } from '../lib/voxel'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 
@@ -18,6 +18,33 @@ const SAMPLES = [
   { id: 'japanese-castle', name: '日本城堡', file: 'japanese-castle.webp' },
   { id: 'notre-dame', name: '巴黎圣母院', file: 'notre-dame.webp' },
 ].map((s) => ({ ...s, url: `${import.meta.env.BASE_URL}samples/${s.file}` }))
+
+// 多视图示例套装：点击自动切到多视图模式并装载四视图
+const HULL_SAMPLE = {
+  id: 'lblock',
+  name: 'L 形块',
+  thumb: `${import.meta.env.BASE_URL}samples/l-front.png`,
+  files: {
+    front: 'l-front.png',
+    back: 'l-back.png',
+    side: 'l-side.png',
+    top: 'l-top.png',
+  } as Record<ViewKey, string>,
+}
+
+const VIEW_LABELS: { key: ViewKey; label: string; required: boolean }[] = [
+  { key: 'front', label: '正视图', required: true },
+  { key: 'back', label: '背视图', required: false },
+  { key: 'side', label: '侧视图', required: true },
+  { key: 'top', label: '顶视图', required: false },
+]
+
+const MODE_NAMES: Record<FormMode, string> = {
+  plate: '平板浮雕',
+  mirror: '双面镜像',
+  lathe: '旋转成型',
+  hull: '多视图交汇',
+}
 
 function fmt(n: number) {
   return n.toLocaleString('en-US')
@@ -40,6 +67,11 @@ export default function Home() {
   const [mode, setMode] = useState<FormMode>('plate')
   const [invert, setInvert] = useState(false)
   const [speed, setSpeed] = useState(1.4)
+
+  // 多视图（hull 模式）
+  const [views, setViews] = useState<Partial<Record<ViewKey, { url: string; name: string }>>>({})
+  const viewImgs = useRef<Partial<Record<ViewKey, HTMLImageElement>>>({})
+  const pendingSlot = useRef<ViewKey | 'single'>('single')
 
   const [job, setJob] = useState<PrintJob | null>(null)
   const [progress, setProgress] = useState({ done: 0, total: 0, layer: 0, layers: 0 })
@@ -94,18 +126,41 @@ export default function Home() {
     setLines((prev) => (prev.length > 90 ? [...prev.slice(-70), line] : [...prev, line]))
   }, [])
 
-  /* 载入图片 */
+  /* 载入图片（单图模式；多视图模式下装入正视图槽位） */
   const applyImage = useCallback(
     async (url: string, name: string) => {
       try {
         const img = await loadImage(url)
-        imgRef.current = img
-        setImageSrc(url)
-        setFileName(name)
         setJob(null)
         setStatus('idle')
         setProgress({ done: 0, total: 0, layer: 0, layers: 0 })
+        if (mode === 'hull') {
+          viewImgs.current.front = img
+          setViews((v) => ({ ...v, front: { url, name } }))
+          log(`; 正视图已装载: ${name} (${img.naturalWidth}×${img.naturalHeight})`)
+          return
+        }
+        imgRef.current = img
+        setImageSrc(url)
+        setFileName(name)
         log(`; 介质已装载: ${name} (${img.naturalWidth}×${img.naturalHeight})`)
+      } catch {
+        log('; 错误: 无法读取该文件')
+      }
+    },
+    [log, mode],
+  )
+
+  /* 载入某个视图槽位 */
+  const applyViewImage = useCallback(
+    async (slot: ViewKey, url: string, name: string) => {
+      try {
+        const img = await loadImage(url)
+        viewImgs.current[slot] = img
+        setViews((v) => ({ ...v, [slot]: { url, name } }))
+        setJob(null)
+        setStatus('idle')
+        log(`; ${VIEW_LABELS.find((l) => l.key === slot)?.label}已装载: ${name}`)
       } catch {
         log('; 错误: 无法读取该文件')
       }
@@ -113,25 +168,56 @@ export default function Home() {
     [log],
   )
 
+  /* 一键装载 L 形块四视图示例 */
+  const loadHullSample = useCallback(async () => {
+    setMode('hull')
+    setJob(null)
+    setStatus('idle')
+    for (const k of ['front', 'back', 'side', 'top'] as ViewKey[]) {
+      const url = `${import.meta.env.BASE_URL}samples/${HULL_SAMPLE.files[k]}`
+      try {
+        const img = await loadImage(url)
+        viewImgs.current[k] = img
+        setViews((v) => ({ ...v, [k]: { url, name: HULL_SAMPLE.files[k] } }))
+      } catch {
+        log(`; 示例视图加载失败: ${HULL_SAMPLE.files[k]}`)
+      }
+    }
+    log('; L 形块四视图套装已装载（多视图交汇）')
+  }, [log])
+
   const handleFile = useCallback(
     (file: File) => {
       if (!file.type.startsWith('image/')) return
-      applyImage(URL.createObjectURL(file), file.name)
+      const url = URL.createObjectURL(file)
+      if (pendingSlot.current !== 'single') {
+        applyViewImage(pendingSlot.current, url, file.name)
+      } else {
+        applyImage(url, file.name)
+      }
     },
-    [applyImage],
+    [applyImage, applyViewImage],
   )
 
+  const pickFile = useCallback((slot: ViewKey | 'single') => {
+    pendingSlot.current = slot
+    fileInput.current?.click()
+  }, [])
+
   /* 开始打印 */
+  const hullReady = Boolean(viewImgs.current.front && viewImgs.current.side)
+  const canPrint = mode === 'hull' ? hullReady : Boolean(imageSrc)
+
   const startPrint = useCallback(() => {
-    if (!imgRef.current || busy) return
+    if (busy || (mode === 'hull' ? !hullReady : !imgRef.current)) return
     setStatus('slicing')
     setElapsed(0)
     log('M140 S60  ; 热床 60°C')
     log('M104 S215 ; 喷嘴 215°C')
     log('G28       ; 三轴回零')
-    log(`; 切片中: ${fileName} @ ${resolution}px · ${{ plate: '平板浮雕', mirror: '双面镜像', lathe: '旋转成型' }[mode]}`)
+    log(`; 切片中: ${mode === 'hull' ? '四视图' : fileName} @ ${resolution}px · ${MODE_NAMES[mode]}`)
     sliceTimer.current = setTimeout(() => {
-      const j = sliceImage(imgRef.current!, {
+      const opts = {
         mode,
         resolution,
         maxDepth,
@@ -139,15 +225,16 @@ export default function Home() {
         bedSize: BED_SIZE,
         bedTopY: BED_TOP_Y,
         planeHeight: PLANE_HEIGHT,
-      })
-      j.name = fileName
+      }
+      const j = mode === 'hull' ? sliceHull(viewImgs.current, opts) : sliceImage(imgRef.current!, opts)
+      j.name = mode === 'hull' ? 'multi-view' : fileName
       setJob(j)
       setProgress({ done: 0, total: j.totalVoxels, layer: 0, layers: j.layers })
       log(`; 切片完成: ${j.layers} 层 · ${fmt(j.totalVoxels)} 体素 · 耗材 ${(j.filamentMm / 1000).toFixed(2)}m`)
       log('M106 S255 ; 冷却风扇开启')
       setStatus('printing')
     }, 1300)
-  }, [busy, fileName, resolution, maxDepth, invert, mode, log])
+  }, [busy, fileName, resolution, maxDepth, invert, mode, log, hullReady])
 
   /* 取消 */
   const cancel = useCallback(() => {
@@ -182,7 +269,7 @@ export default function Home() {
   const remain = job ? Math.max(0, job.estSeconds / speed - elapsed) : 0
 
   const statusMeta = {
-    idle: { label: imageSrc ? 'READY 就绪' : 'STANDBY 待机', cls: 'text-sky-400', led: 'text-sky-400 led-slow' },
+    idle: { label: imageSrc || (mode === 'hull' && hullReady) ? 'READY 就绪' : 'STANDBY 待机', cls: 'text-sky-400', led: 'text-sky-400 led-slow' },
     slicing: { label: 'SLICING 切片中', cls: 'text-amber-400', led: 'text-amber-400 led-fast' },
     printing: { label: 'PRINTING 打印中', cls: 'text-primary', led: 'text-primary led-fast' },
     done: { label: 'COMPLETE 完成', cls: 'text-emerald-400', led: 'text-emerald-400 led-slow' },
@@ -227,7 +314,44 @@ export default function Home() {
               className="hidden"
               onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
             />
-            {imageSrc ? (
+            {mode === 'hull' ? (
+              /* ===== 多视图四槽位 ===== */
+              <div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {VIEW_LABELS.map(({ key, label, required }) => {
+                    const v = views[key]
+                    return (
+                      <button
+                        key={key}
+                        disabled={busy}
+                        onClick={() => pickFile(key)}
+                        className={`dropzone relative aspect-square flex flex-col items-center justify-center gap-1 overflow-hidden ${v ? 'border-solid' : ''}`}
+                      >
+                        {v ? (
+                          <>
+                            <img src={v.url} alt={label} className="absolute inset-0 w-full h-full object-cover" />
+                            <span className="absolute inset-x-0 bottom-0 bg-black/60 backdrop-blur-[2px] font-mono2 text-[9px] text-foreground/85 py-0.5 text-center">
+                              {label} · 点击更换
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-mono2 text-[10px] text-foreground/70">{label}</span>
+                            <span className="font-mono2 text-[8.5px] text-muted-foreground tracking-widest">
+                              {required ? '必需 · 点击上传' : '可选 · 点击上传'}
+                            </span>
+                          </>
+                        )}
+                        {v && <span className="led text-emerald-400 absolute top-1.5 right-1.5" />}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div className="font-mono2 text-[9px] text-muted-foreground mt-2 leading-relaxed">
+                  约定：背视图从背后拍 · 侧视图从右侧拍（正面朝画面左）· 顶视图上方为背面。至少装载正视图 + 侧视图。
+                </div>
+              </div>
+            ) : imageSrc ? (
               <div className="rise-in">
                 <div className="corner-ticks border border-border bg-black/40 p-1.5">
                   <img src={imageSrc} alt="media" className="w-full aspect-square object-cover" />
@@ -235,7 +359,7 @@ export default function Home() {
                 <div className="flex items-center justify-between mt-2">
                   <span className="font-mono2 text-[10px] text-muted-foreground truncate max-w-[170px]">{fileName}</span>
                   <button
-                    onClick={() => fileInput.current?.click()}
+                    onClick={() => pickFile('single')}
                     disabled={busy}
                     className="font-mono2 text-[10px] tracking-widest text-primary hover:underline disabled:opacity-40"
                   >
@@ -245,7 +369,7 @@ export default function Home() {
               </div>
             ) : (
               <button
-                onClick={() => fileInput.current?.click()}
+                onClick={() => pickFile('single')}
                 onDragOver={(e) => {
                   e.preventDefault()
                   setDrag(true)
@@ -278,7 +402,7 @@ export default function Home() {
                 <span className="font-mono2 text-[9px] tracking-[0.2em] text-muted-foreground">示例图库 SAMPLES</span>
                 <span className="font-mono2 text-[9px] text-muted-foreground/50">点击即印</span>
               </div>
-              <div className="grid grid-cols-5 gap-1.5">
+              <div className="grid grid-cols-6 gap-1.5">
                 {SAMPLES.map((s) => (
                   <button
                     key={s.id}
@@ -297,6 +421,22 @@ export default function Home() {
                     </span>
                   </button>
                 ))}
+                {/* 多视图套装 */}
+                <button
+                  disabled={busy}
+                  onClick={loadHullSample}
+                  className="group relative aspect-square overflow-hidden border border-dashed border-primary/50 hover:border-primary transition-colors disabled:opacity-40"
+                  title="L 形块 · 四视图套装（多视图交汇）"
+                >
+                  <img
+                    src={HULL_SAMPLE.thumb}
+                    alt="L 形块四视图"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  />
+                  <span className="absolute inset-x-0 bottom-0 bg-black/60 backdrop-blur-[2px] font-mono2 text-[8.5px] text-primary py-0.5 text-center">
+                    多视图
+                  </span>
+                </button>
               </div>
             </div>
           </section>
@@ -309,7 +449,7 @@ export default function Home() {
               <div className="flex justify-between mb-1.5">
                 <span className="font-mono2 text-[10px] text-foreground/70">成型模式</span>
                 <span className="font-mono2 text-[9px] text-muted-foreground">
-                  {mode === 'plate' ? '单面竖直浮雕' : mode === 'mirror' ? '前后对称' : '旋转体 360°'}
+                  {mode === 'plate' ? '单面竖直浮雕' : mode === 'mirror' ? '前后对称' : mode === 'lathe' ? '旋转体 360°' : '轮廓交汇'}
                 </span>
               </div>
               <div className="flex">
@@ -317,11 +457,12 @@ export default function Home() {
                   { id: 'plate', label: '平板' },
                   { id: 'mirror', label: '双面' },
                   { id: 'lathe', label: '旋转' },
+                  { id: 'hull', label: '多视图' },
                 ] as const).map((m) => (
                   <button
                     key={m.id}
                     onClick={() => setMode(m.id)}
-                    className={`seg-btn flex-1 first:border-r-0 [&:nth-child(2)]:border-r-0 ${mode === m.id ? 'seg-btn-active' : ''}`}
+                    className={`seg-btn flex-1 first:border-r-0 [&:nth-child(2)]:border-r-0 [&:nth-child(3)]:border-r-0 ${mode === m.id ? 'seg-btn-active' : ''}`}
                   >
                     {m.label}
                   </button>
@@ -335,6 +476,11 @@ export default function Home() {
               {mode === 'mirror' && (
                 <div className="font-mono2 text-[9px] text-muted-foreground mt-1.5 leading-relaxed">
                   保留主体核心厚度，明暗仅调节双侧表面起伏
+                </div>
+              )}
+              {mode === 'hull' && (
+                <div className="font-mono2 text-[9px] text-muted-foreground mt-1.5 leading-relaxed">
+                  四视角轮廓向空间投影取交集，形状最接近真实
                 </div>
               )}
             </div>
@@ -357,11 +503,11 @@ export default function Home() {
               </div>
             </div>
 
-            <div className={`mb-4 transition-opacity ${mode === 'lathe' ? 'opacity-30 pointer-events-none' : ''}`}>
+            <div className={`mb-4 transition-opacity ${mode === 'lathe' || mode === 'hull' ? 'opacity-30 pointer-events-none' : ''}`}>
               <div className="flex justify-between mb-1.5">
                 <span className="font-mono2 text-[10px] text-foreground/70">浮雕深度</span>
                 <span className="font-mono2 text-[10px] text-primary">
-                  {mode === 'lathe' ? '由轮廓决定' : `${Math.round(maxDepth * 100)}mm`}
+                  {mode === 'lathe' || mode === 'hull' ? '由轮廓决定' : `${Math.round(maxDepth * 100)}mm`}
                 </span>
               </div>
               <Slider value={[maxDepth]} onValueChange={([v]) => setMaxDepth(v)} min={0.2} max={1.4} step={0.05} />
@@ -403,7 +549,7 @@ export default function Home() {
             ) : (
               <button
                 onClick={startPrint}
-                disabled={!imageSrc}
+                disabled={!canPrint}
                 className="w-full h-11 bg-primary text-primary-foreground font-mono2 text-[12px] tracking-[0.3em] hover:brightness-110 active:brightness-95 transition-all disabled:opacity-25 disabled:cursor-not-allowed"
               >
                 ▶ 开始打印

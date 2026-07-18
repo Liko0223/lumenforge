@@ -4,7 +4,11 @@
 //  - mirror 双面镜像：浮雕向前后两侧对称凸出
 //  - lathe  旋转成型：假设物体是旋转体，按轮廓半宽绕竖直轴扫掠 360°
 
-export type FormMode = 'plate' | 'mirror' | 'lathe'
+export type FormMode = 'plate' | 'mirror' | 'lathe' | 'hull'
+
+/* 四视图（多视图轮廓交汇） */
+export type ViewKey = 'front' | 'back' | 'side' | 'top'
+export type ViewImages = Partial<Record<ViewKey, HTMLImageElement | null>>
 
 export interface PrintJob {
   name: string
@@ -266,6 +270,107 @@ export function sliceImage(img: HTMLImageElement, opts: SliceOptions): PrintJob 
     default:
       return buildPlate(P, opts)
   }
+}
+
+/* 视图 → 前景遮罩（四角取背景色，距离阈值判定） */
+function fgMask(P: ReturnType<typeof extractPixels>, N: number): Uint8Array {
+  let br = 0, bg = 0, bb = 0, bn = 0
+  for (const [cy0, cx0] of [[0, 0], [0, N - 4], [N - 4, 0], [N - 4, N - 4]] as const) {
+    for (let y = cy0; y < cy0 + 4; y++) {
+      for (let x = cx0; x < cx0 + 4; x++) {
+        const i = y * N + x
+        br += P.r[i]; bg += P.g[i]; bb += P.b[i]; bn++
+      }
+    }
+  }
+  br /= bn; bg /= bn; bb /= bn
+  const mask = new Uint8Array(N * N)
+  for (let i = 0; i < N * N; i++) {
+    if (P.a[i] < 100) continue
+    if (Math.hypot(P.r[i] - br, P.g[i] - bg, P.b[i] - bb) > 30) mask[i] = 1
+  }
+  return mask
+}
+
+/* ---- hull：多视图轮廓交汇（visual hull 空间雕刻） ----
+   约定：背视图从背后拍摄（自动左右镜像）；
+        侧视图从物体右侧拍摄，画面左 = 正面；
+        顶视图上方 = 背面，下方 = 正面。 */
+export function sliceHull(views: ViewImages, opts: SliceOptions): PrintJob {
+  const N = opts.resolution
+  const cell = opts.planeHeight / N
+  const half = opts.planeHeight / 2
+
+  const masks: Partial<Record<ViewKey, Uint8Array>> = {}
+  const pixels: Partial<Record<ViewKey, ReturnType<typeof extractPixels>>> = {}
+  for (const k of ['front', 'back', 'side', 'top'] as ViewKey[]) {
+    const img = views[k]
+    if (!img) continue
+    const P = extractPixels(img, N)
+    pixels[k] = P
+    masks[k] = fgMask(P, N)
+  }
+  const F = masks.front
+  if (!F) throw new Error('hull mode requires at least the front view')
+
+  const solidAt = (ix: number, iyRowFromBottom: number, iz: number): boolean => {
+    const yImg = N - 1 - iyRowFromBottom
+    if (!F[yImg * N + ix]) return false
+    if (masks.back && !masks.back[yImg * N + (N - 1 - ix)]) return false
+    if (masks.side && !masks.side[yImg * N + (N - 1 - iz)]) return false
+    if (masks.top && !masks.top[(N - 1 - iz) * N + ix]) return false
+    return true
+  }
+
+  // 预算自适应：超预算则用 2× 粗网格重建
+  let g = 1
+  let count = 0
+  for (let row = 0; row < N; row++)
+    for (let ix = 0; ix < N; ix++)
+      for (let iz = 0; iz < N; iz++) if (solidAt(ix, row, iz)) count++
+  if (count > MAX_VOXELS) {
+    g = 2
+    count = 0
+    for (let row = 0; row < N; row += g)
+      for (let ix = 0; ix < N; ix += g)
+        for (let iz = 0; iz < N; iz += g) if (solidAt(ix, row, iz)) count++
+  }
+
+  const e: Emit = { px: [], py: [], pz: [], colors: [] }
+  const vcell = cell * g
+  for (let row = 0; row < N; row += g) {
+    const yImg = N - 1 - row
+    const fwd = (row / g) % 2 === 0
+    for (let xi = 0; xi < N; xi += g) {
+      const ix = fwd ? xi : N - g - xi
+      for (let iz = 0; iz < N; iz += g) {
+        if (!solidAt(ix, row, iz)) continue
+        // 颜色：优先正视图，其次侧视、顶视
+        let cr = 200, cg = 200, cb = 200
+        const pf = pixels.front
+        if (pf && F[yImg * N + ix]) {
+          const i = yImg * N + ix
+          cr = pf.r[i]; cg = pf.g[i]; cb = pf.b[i]
+        } else if (pixels.side) {
+          const i = yImg * N + (N - 1 - iz)
+          cr = pixels.side.r[i]; cg = pixels.side.g[i]; cb = pixels.side.b[i]
+        } else if (pixels.top) {
+          const i = (N - 1 - iz) * N + ix
+          cr = pixels.top.r[i]; cg = pixels.top.g[i]; cb = pixels.top.b[i]
+        }
+        pushVoxel(
+          e,
+          (ix + g / 2) * cell - half,
+          opts.bedTopY + (row + g / 2) * cell,
+          (iz + g / 2) * cell - half,
+          cr, cg, cb, 1,
+        )
+      }
+    }
+  }
+  const job = finalize(e, opts, N, vcell)
+  job.layers = Math.ceil(N / g)
+  return job
 }
 
 export function loadImage(src: string): Promise<HTMLImageElement> {
