@@ -1,10 +1,14 @@
 // 影像切片引擎：把位图转换成逐层向上生长的体素打印任务
-// 三种成型模式：
+// 四种成型模式：
 //  - plate  平板浮雕：竖直平面，明暗决定单侧凸出深度
 //  - mirror 双面镜像：浮雕向前后两侧对称凸出
 //  - lathe  旋转成型：假设物体是旋转体，按轮廓半宽绕竖直轴扫掠 360°
 
-export type FormMode = 'plate' | 'mirror' | 'lathe'
+export type FormMode = 'plate' | 'mirror' | 'lathe' | 'hull'
+
+/* 四视图（多视图轮廓交汇） */
+export type ViewKey = 'front' | 'back' | 'side' | 'top'
+export type ViewImages = Partial<Record<ViewKey, HTMLImageElement | null>>
 
 export interface PrintJob {
   name: string
@@ -38,17 +42,17 @@ export interface SliceOptions {
 
 const MAX_VOXELS = 170_000
 const BASE_VPS = 240 // speed=1 时每秒沉积体素数
+const MIRROR_CORE_DEPTH_RATIO = 0.72
 
-/* 共享：把图片 cover 裁剪到 N×N 并读出像素 */
-function extractPixels(img: HTMLImageElement, N: number) {
-  const canvas = document.createElement('canvas')
-  canvas.width = N
-  canvas.height = N
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })!
-  const iw = img.naturalWidth
-  const ih = img.naturalHeight
-  const side = Math.min(iw, ih)
-  ctx.drawImage(img, (iw - side) / 2, (ih - side) / 2, side, side, 0, 0, N, N)
+interface PixelGrid {
+  r: Uint8Array
+  g: Uint8Array
+  b: Uint8Array
+  a: Uint8Array
+  sourceHasTransparency: boolean
+}
+
+function readCanvasPixels(ctx: CanvasRenderingContext2D, N: number): PixelGrid {
   const data = ctx.getImageData(0, 0, N, N).data
   const r = new Uint8Array(N * N)
   const g = new Uint8Array(N * N)
@@ -60,7 +64,53 @@ function extractPixels(img: HTMLImageElement, N: number) {
     b[i] = data[i * 4 + 2]
     a[i] = data[i * 4 + 3]
   }
-  return { r, g, b, a }
+  return { r, g, b, a, sourceHasTransparency: false }
+}
+
+/* 单图模式沿用 cover 裁剪，保证画面铺满打印平面。 */
+function extractPixels(img: HTMLImageElement, N: number) {
+  const canvas = document.createElement('canvas')
+  canvas.width = N
+  canvas.height = N
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!
+  const iw = img.naturalWidth
+  const ih = img.naturalHeight
+  const side = Math.min(iw, ih)
+  ctx.drawImage(img, (iw - side) / 2, (ih - side) / 2, side, side, 0, 0, N, N)
+  return readCanvasPixels(ctx, N)
+}
+
+/* 多视图模式使用 contain，任何宽高比都保留完整轮廓并居中对齐。 */
+function extractViewPixels(img: HTMLImageElement, N: number) {
+  const canvas = document.createElement('canvas')
+  canvas.width = N
+  canvas.height = N
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!
+  const iw = img.naturalWidth
+  const ih = img.naturalHeight
+  const scale = Math.min(N / iw, N / ih)
+  const width = iw * scale
+  const height = ih * scale
+  const left = (N - width) / 2
+  const top = (N - height) / 2
+  ctx.drawImage(img, left, top, width, height)
+  const pixels = readCanvasPixels(ctx, N)
+
+  // 只检查实际图像区域，避免把 contain 产生的透明留白误认为源图透明背景。
+  const x0 = Math.max(0, Math.ceil(left) + 1)
+  const x1 = Math.min(N, Math.floor(left + width) - 1)
+  const y0 = Math.max(0, Math.ceil(top) + 1)
+  const y1 = Math.min(N, Math.floor(top + height) - 1)
+  let sampled = 0
+  let transparent = 0
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      sampled++
+      if (pixels.a[y * N + x] < 32) transparent++
+    }
+  }
+  pixels.sourceHasTransparency = transparent > sampled * 0.01
+  return pixels
 }
 
 interface Emit {
@@ -102,7 +152,7 @@ function finalize(e: Emit, opts: SliceOptions, N: number, cell: number, voxelDep
 }
 
 /* 明暗 → 深度等级（1..depthCells） */
-function depthField(P: ReturnType<typeof extractPixels>, N: number, invert: boolean, depthCells: number) {
+function depthField(P: ReturnType<typeof extractPixels>, N: number, invert: boolean, depthCells: number, baseDepthRatio = 0) {
   const depths = new Uint8Array(N * N)
   for (let i = 0; i < N * N; i++) {
     if (P.a[i] < 100) {
@@ -112,7 +162,9 @@ function depthField(P: ReturnType<typeof extractPixels>, N: number, invert: bool
     const lum = (0.2126 * P.r[i] + 0.7152 * P.g[i] + 0.0722 * P.b[i]) / 255
     let h = invert ? lum : 1 - lum
     h = Math.pow(h, 1.3)
-    depths[i] = Math.max(1, Math.round(h * depthCells))
+    const normalizedDepth = baseDepthRatio + h * (1 - baseDepthRatio)
+    const sampledDepth = normalizedDepth * depthCells
+    depths[i] = Math.max(1, baseDepthRatio > 0 ? Math.ceil(sampledDepth) : Math.round(sampledDepth))
   }
   return depths
 }
@@ -157,7 +209,8 @@ function buildMirror(P: ReturnType<typeof extractPixels>, opts: SliceOptions): P
   const cell = opts.planeHeight / N
   const depthCells = Math.max(3, Math.min(Math.round(opts.maxDepth / cell), Math.floor(MAX_VOXELS / (2 * N * N))))
   const depthStep = opts.maxDepth / Math.max(1, depthCells - 0.5)
-  const depths = depthField(P, N, opts.invert, depthCells)
+  // 双面模型先保留稳定核心厚度，明暗只控制靠近表面的起伏。
+  const depths = depthField(P, N, opts.invert, depthCells, MIRROR_CORE_DEPTH_RATIO)
   const e: Emit = { px: [], py: [], pz: [], colors: [] }
 
   for (let row = 0; row < N; row++) {
@@ -262,6 +315,142 @@ export function sliceImage(img: HTMLImageElement, opts: SliceOptions): PrintJob 
     default:
       return buildPlate(P, opts)
   }
+}
+
+function fillSmallMaskHoles(mask: Uint8Array, N: number): Uint8Array {
+  const filled = mask.slice()
+  for (let y = 1; y < N - 1; y++) {
+    for (let x = 1; x < N - 1; x++) {
+      const i = y * N + x
+      if (mask[i]) continue
+      let neighbors = 0
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++)
+          if ((dx || dy) && mask[(y + dy) * N + x + dx]) neighbors++
+      if (neighbors >= 6) filled[i] = 1
+    }
+  }
+  return filled
+}
+
+/* 视图 → 前景遮罩：透明图片直接读取轮廓；普通图片再回退到四角背景色。 */
+function fgMask(P: ReturnType<typeof extractPixels>, N: number): Uint8Array {
+  const total = N * N
+
+  if (P.sourceHasTransparency) {
+    const alphaMask = new Uint8Array(total)
+    for (let i = 0; i < total; i++) if (P.a[i] >= 96) alphaMask[i] = 1
+    return fillSmallMaskHoles(alphaMask, N)
+  }
+
+  let br = 0, bg = 0, bb = 0, bn = 0
+  for (const [cy0, cx0] of [[0, 0], [0, N - 4], [N - 4, 0], [N - 4, N - 4]] as const) {
+    for (let y = cy0; y < cy0 + 4; y++) {
+      for (let x = cx0; x < cx0 + 4; x++) {
+        const i = y * N + x
+        br += P.r[i]; bg += P.g[i]; bb += P.b[i]; bn++
+      }
+    }
+  }
+  br /= bn; bg /= bn; bb /= bn
+  const mask = new Uint8Array(total)
+  for (let i = 0; i < total; i++) {
+    if (P.a[i] < 100) continue
+    if (Math.hypot(P.r[i] - br, P.g[i] - bg, P.b[i] - bb) > 30) mask[i] = 1
+  }
+  return fillSmallMaskHoles(mask, N)
+}
+
+/* ---- hull：多视图轮廓交汇（visual hull 空间雕刻） ----
+   约定：背视图从背后拍摄（自动左右镜像）；
+        侧视图从物体右侧拍摄，画面左 = 正面；
+        顶视图上方 = 背面，下方 = 正面。 */
+export function sliceHull(views: ViewImages, opts: SliceOptions): PrintJob {
+  const N = opts.resolution
+  const cell = opts.planeHeight / N
+  const half = opts.planeHeight / 2
+
+  const masks: Partial<Record<ViewKey, Uint8Array>> = {}
+  const pixels: Partial<Record<ViewKey, ReturnType<typeof extractPixels>>> = {}
+  for (const k of ['front', 'back', 'side', 'top'] as ViewKey[]) {
+    const img = views[k]
+    if (!img) continue
+    const P = extractViewPixels(img, N)
+    pixels[k] = P
+    masks[k] = fgMask(P, N)
+  }
+  const F = masks.front
+  if (!F) throw new Error('hull mode requires at least the front view')
+
+  const solidAt = (ix: number, iyRowFromBottom: number, iz: number): boolean => {
+    const yImg = N - 1 - iyRowFromBottom
+    if (!F[yImg * N + ix]) return false
+    if (masks.back && !masks.back[yImg * N + (N - 1 - ix)]) return false
+    if (masks.side && !masks.side[yImg * N + (N - 1 - iz)]) return false
+    if (masks.top && !masks.top[iz * N + ix]) return false
+    return true
+  }
+
+  // 预算自适应：超预算则用 2× 粗网格重建
+  let g = 1
+  let count = 0
+  for (let row = 0; row < N; row++)
+    for (let ix = 0; ix < N; ix++)
+      for (let iz = 0; iz < N; iz++) if (solidAt(ix, row, iz)) count++
+  if (count > MAX_VOXELS) {
+    g = 2
+    count = 0
+    for (let row = 0; row < N; row += g)
+      for (let ix = 0; ix < N; ix += g)
+        for (let iz = 0; iz < N; iz += g) if (solidAt(ix, row, iz)) count++
+  }
+
+  const e: Emit = { px: [], py: [], pz: [], colors: [] }
+  const vcell = cell * g
+  for (let row = 0; row < N; row += g) {
+    const yImg = N - 1 - row
+    const fwd = (row / g) % 2 === 0
+    for (let xi = 0; xi < N; xi += g) {
+      const ix = fwd ? xi : N - g - xi
+      for (let iz = 0; iz < N; iz += g) {
+        if (!solidAt(ix, row, iz)) continue
+        // 颜色取离当前体素最近的可用投影面，避免整个模型都贴成正视图。
+        const front = pixels.front!
+        const frontIndex = yImg * N + ix
+        let bestDistance = N - 1 - iz
+        let cr = front.r[frontIndex], cg = front.g[frontIndex], cb = front.b[frontIndex]
+        const back = pixels.back
+        const backIndex = yImg * N + (N - 1 - ix)
+        if (back && back.a[backIndex] >= 96 && iz <= bestDistance) {
+          bestDistance = iz
+          cr = back.r[backIndex]; cg = back.g[backIndex]; cb = back.b[backIndex]
+        }
+        const side = pixels.side
+        const sideIndex = yImg * N + (N - 1 - iz)
+        const sideDistance = Math.min(ix, N - 1 - ix)
+        if (side && side.a[sideIndex] >= 96 && sideDistance <= bestDistance) {
+          bestDistance = sideDistance
+          cr = side.r[sideIndex]; cg = side.g[sideIndex]; cb = side.b[sideIndex]
+        }
+        const top = pixels.top
+        const topIndex = iz * N + ix
+        const topDistance = N - 1 - row
+        if (top && top.a[topIndex] >= 96 && topDistance <= bestDistance) {
+          cr = top.r[topIndex]; cg = top.g[topIndex]; cb = top.b[topIndex]
+        }
+        pushVoxel(
+          e,
+          (ix + g / 2) * cell - half,
+          opts.bedTopY + (row + g / 2) * cell,
+          (iz + g / 2) * cell - half,
+          cr, cg, cb, 1,
+        )
+      }
+    }
+  }
+  const job = finalize(e, opts, N, vcell)
+  job.layers = Math.ceil(N / g)
+  return job
 }
 
 export function loadImage(src: string): Promise<HTMLImageElement> {
