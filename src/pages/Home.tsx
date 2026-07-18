@@ -19,23 +19,23 @@ const SAMPLES = [
   { id: 'notre-dame', name: '巴黎圣母院', file: 'notre-dame.webp' },
 ].map((s) => ({ ...s, url: `${import.meta.env.BASE_URL}samples/${s.file}` }))
 
-// 多视图示例套装：点击自动切到多视图模式并装载四视图
+// 多视图示例套装：四张图已统一正投影、坐标方向、轮廓尺寸与透明画布。
 const HULL_SAMPLE = {
-  id: 'lblock',
-  name: 'L 形块',
-  thumb: `${import.meta.env.BASE_URL}samples/l-front.png`,
+  id: 'taihe-hall',
+  name: '太和殿',
+  thumb: `${import.meta.env.BASE_URL}samples/taihe-front.webp`,
   files: {
-    front: 'l-front.png',
-    back: 'l-back.png',
-    side: 'l-side.png',
-    top: 'l-top.png',
+    front: 'taihe-front.webp',
+    back: 'taihe-back.webp',
+    side: 'taihe-right.webp',
+    top: 'taihe-top.webp',
   } as Record<ViewKey, string>,
 }
 
 const VIEW_LABELS: { key: ViewKey; label: string; required: boolean }[] = [
   { key: 'front', label: '正视图', required: true },
   { key: 'back', label: '背视图', required: false },
-  { key: 'side', label: '侧视图', required: true },
+  { key: 'side', label: '右视图', required: true },
   { key: 'top', label: '顶视图', required: false },
 ]
 
@@ -168,22 +168,35 @@ export default function Home() {
     [log],
   )
 
-  /* 一键装载 L 形块四视图示例 */
+  /* 原子装载四视图示例，避免逐张完成时出现短暂的不一致组合。 */
   const loadHullSample = useCallback(async () => {
     setMode('hull')
     setJob(null)
     setStatus('idle')
-    for (const k of ['front', 'back', 'side', 'top'] as ViewKey[]) {
-      const url = `${import.meta.env.BASE_URL}samples/${HULL_SAMPLE.files[k]}`
-      try {
-        const img = await loadImage(url)
-        viewImgs.current[k] = img
-        setViews((v) => ({ ...v, [k]: { url, name: HULL_SAMPLE.files[k] } }))
-      } catch {
-        log(`; 示例视图加载失败: ${HULL_SAMPLE.files[k]}`)
-      }
+    const keys = ['front', 'back', 'side', 'top'] as ViewKey[]
+    try {
+      const loaded = await Promise.all(
+        keys.map(async (key) => {
+          const file = HULL_SAMPLE.files[key]
+          const url = `${import.meta.env.BASE_URL}samples/${file}`
+          return { key, file, url, img: await loadImage(url) }
+        }),
+      )
+      const nextImages: Partial<Record<ViewKey, HTMLImageElement>> = {}
+      const nextViews: Partial<Record<ViewKey, { url: string; name: string }>> = {}
+      loaded.forEach(({ key, file, url, img }) => {
+        nextImages[key] = img
+        nextViews[key] = { url, name: file }
+      })
+      viewImgs.current = nextImages
+      setViews(nextViews)
+      setFileName(HULL_SAMPLE.name)
+      log(`; ${HULL_SAMPLE.name}四视图已装载 · 正投影已校准`)
+    } catch {
+      viewImgs.current = {}
+      setViews({})
+      log('; 示例视图加载失败，请重试')
     }
-    log('; L 形块四视图套装已装载（多视图交汇）')
   }, [log])
 
   const handleFile = useCallback(
@@ -205,7 +218,8 @@ export default function Home() {
   }, [])
 
   /* 开始打印 */
-  const hullReady = Boolean(viewImgs.current.front && viewImgs.current.side)
+  const hullReady = Boolean(views.front && views.side)
+  const loadedViewCount = VIEW_LABELS.filter(({ key }) => Boolean(views[key])).length
   const canPrint = mode === 'hull' ? hullReady : Boolean(imageSrc)
 
   const startPrint = useCallback(() => {
@@ -329,7 +343,7 @@ export default function Home() {
                       >
                         {v ? (
                           <>
-                            <img src={v.url} alt={label} className="absolute inset-0 w-full h-full object-cover" />
+                            <img src={v.url} alt={label} className="absolute inset-0 w-full h-full object-contain bg-black/35 p-1" />
                             <span className="absolute inset-x-0 bottom-0 bg-black/60 backdrop-blur-[2px] font-mono2 text-[9px] text-foreground/85 py-0.5 text-center">
                               {label} · 点击更换
                             </span>
@@ -347,8 +361,14 @@ export default function Home() {
                     )
                   })}
                 </div>
-                <div className="font-mono2 text-[9px] text-muted-foreground mt-2 leading-relaxed">
-                  约定：背视图从背后拍 · 侧视图从右侧拍（正面朝画面左）· 顶视图上方为背面。至少装载正视图 + 侧视图。
+                <div className="flex items-center justify-between mt-2">
+                  <span className="font-mono2 text-[9px] text-muted-foreground">正视 + 右视必需，背视 + 顶视提升精度</span>
+                  <span className={`font-mono2 text-[9px] ${hullReady ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {loadedViewCount}/4
+                  </span>
+                </div>
+                <div className="font-mono2 text-[9px] text-muted-foreground mt-1 leading-relaxed">
+                  方向：背视图自然拍摄 · 右视图正面朝左 · 顶视图上方为背面。建议使用同尺度、无透视、透明背景。
                 </div>
               </div>
             ) : imageSrc ? (
@@ -426,12 +446,12 @@ export default function Home() {
                   disabled={busy}
                   onClick={loadHullSample}
                   className="group relative aspect-square overflow-hidden border border-dashed border-primary/50 hover:border-primary transition-colors disabled:opacity-40"
-                  title="L 形块 · 四视图套装（多视图交汇）"
+                  title={`${HULL_SAMPLE.name} · 四视图套装（多视图交汇）`}
                 >
                   <img
                     src={HULL_SAMPLE.thumb}
-                    alt="L 形块四视图"
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    alt={`${HULL_SAMPLE.name}四视图`}
+                    className="w-full h-full object-contain bg-black/35 p-0.5 group-hover:scale-105 transition-transform duration-300"
                   />
                   <span className="absolute inset-x-0 bottom-0 bg-black/60 backdrop-blur-[2px] font-mono2 text-[8.5px] text-primary py-0.5 text-center">
                     多视图

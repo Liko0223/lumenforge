@@ -166,56 +166,9 @@ def tiantan():
     img.filter(ImageFilter.GaussianBlur(0.8)).save(os.path.join(OUT, "tiantan.png"))
 
 
-# ---------- 6. L 形块四视图（多视图交汇示范） ----------
-def lblock():
-    cream = (240, 234, 220)
-    steel = (52, 58, 72)
-    steel_hi = (74, 82, 100)
-
-    def base():
-        img = Image.new("RGB", (S, S))
-        d = ImageDraw.Draw(img)
-        for y in range(S):
-            d.line([(0, y), (S, y)], fill=lerp(cream, (226, 220, 208), y / S))
-        return img, d
-
-    def shade_rect(d, box, c0, c1, vertical=True):
-        x0, y0, x1, y1 = box
-        steps = int((y1 - y0) if vertical else (x1 - x0))
-        for t_i in range(max(1, steps)):
-            t = t_i / max(1, steps - 1)
-            if vertical:
-                d.line([(x0, y0 + t_i), (x1, y0 + t_i)], fill=lerp(c0, c1, t))
-            else:
-                d.line([(x0 + t_i, y0), (x0 + t_i, y1)], fill=lerp(c0, c1, t))
-
-    # 正视图：L 形（左竖臂 + 底横臂）
-    img, d = base()
-    shade_rect(d, (150, 150, 300, 480), steel_hi, steel)
-    shade_rect(d, (150, 330, 450, 480), steel_hi, steel)
-    img.filter(ImageFilter.GaussianBlur(0.7)).save(os.path.join(OUT, "l-front.png"))
-
-    # 背视图：L 左右镜像
-    img, d = base()
-    shade_rect(d, (300, 150, 450, 480), steel_hi, steel)
-    shade_rect(d, (150, 330, 450, 480), steel_hi, steel)
-    img.filter(ImageFilter.GaussianBlur(0.7)).save(os.path.join(OUT, "l-back.png"))
-
-    # 侧视图：满高矩形（纵深 × 高度）
-    img, d = base()
-    shade_rect(d, (150, 150, 450, 480), steel_hi, steel)
-    img.filter(ImageFilter.GaussianBlur(0.7)).save(os.path.join(OUT, "l-side.png"))
-
-    # 顶视图：满幅正方形（宽 × 纵深）
-    img, d = base()
-    shade_rect(d, (150, 150, 450, 450), steel, steel_hi)
-    img.filter(ImageFilter.GaussianBlur(0.7)).save(os.path.join(OUT, "l-top.png"))
-
-
 mountains()
 planet()
 seal()
 contours()
 tiantan()
-lblock()
 print("samples written to", os.path.abspath(OUT))
