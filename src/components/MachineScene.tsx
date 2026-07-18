@@ -190,6 +190,7 @@ function PrintRig({
   const bed = useRef<THREE.Group>(null!)
   const gantry = useRef<THREE.Group>(null!)
   const carriage = useRef<THREE.Group>(null!)
+  const model = useRef<THREE.Group>(null!)
   const nozzleGlow = useRef<THREE.PointLight>(null!)
   const filament = useRef<THREE.Mesh>(null!)
   const mesh = useRef<THREE.InstancedMesh>(null!)
@@ -286,6 +287,10 @@ function PrintRig({
     carriage.current.position.x += (targetX - carriage.current.position.x) * k
     bed.current.position.z += (targetBedZ - bed.current.position.z) * k
     gantry.current.position.y += (targetGantryY - gantry.current.position.y) * kg
+    // 打印产物与热床同步位移（完成后热床隐藏，模型保留并缓缓落地）
+    model.current.position.z = bed.current.position.z
+    const targetModelY = status === 'done' ? -BED_TOP_Y + 0.002 : 0
+    model.current.position.y += (targetModelY - model.current.position.y) * (1 - Math.exp(-3 * dt))
 
     // 喷头工作灯 & 熔丝
     const active = status === 'printing' && !!job
@@ -296,40 +301,28 @@ function PrintRig({
 
   return (
     <group>
-      {/* ===== 热床（沿 Z 移动，打印产物随床移动） ===== */}
-      <group ref={bed} position={[0, 0, 0]}>
-        <mesh position={[0, 0.545, 0]} castShadow receiveShadow>
-          <boxGeometry args={[2.7, 0.07, 2.7]} />
-          {mat('#1d1f24', 0.4, 0.6)}
-        </mesh>
-        <mesh position={[0, 0.59, 0]} receiveShadow>
-          <boxGeometry args={[BED_SIZE + 0.06, 0.02, BED_SIZE + 0.06]} />
-          <meshStandardMaterial color={C.bedGlass} roughness={0.15} metalness={0.4} />
-        </mesh>
-        {/* 床面刻度 */}
-        <gridHelper args={[BED_SIZE, 10, '#2c2f36', '#22252b']} position={[0, 0.602, 0]} />
-        {/* 长尾夹 */}
-        {[[-1.05, -1.05], [1.05, -1.05], [-1.05, 1.05], [1.05, 1.05]].map(([x, z], i) => (
-          <mesh key={i} position={[x, 0.615, z]}>
-            <boxGeometry args={[0.1, 0.03, 0.05]} />
-            {mat('#0c0d10', 0.35, 0.7)}
+      {/* ===== 机械部分（完成后隐藏，进入展品模式） ===== */}
+      <group visible={status !== 'done'}>
+        {/* ===== 热床（沿 Z 移动） ===== */}
+        <group ref={bed} position={[0, 0, 0]}>
+          <mesh position={[0, 0.545, 0]} castShadow receiveShadow>
+            <boxGeometry args={[2.7, 0.07, 2.7]} />
+            {mat('#1d1f24', 0.4, 0.6)}
           </mesh>
-        ))}
-        {/* 打印产物 */}
-        {job && (
-          <instancedMesh
-            key={job.totalVoxels}
-            ref={mesh}
-            args={[undefined, undefined, job.totalVoxels]}
-            castShadow
-            receiveShadow
-            frustumCulled={false}
-          >
-            <boxGeometry args={[1, 1, 1]} />
-            <meshStandardMaterial roughness={0.6} metalness={0.05} />
-          </instancedMesh>
-        )}
-      </group>
+          <mesh position={[0, 0.59, 0]} receiveShadow>
+            <boxGeometry args={[BED_SIZE + 0.06, 0.02, BED_SIZE + 0.06]} />
+            <meshStandardMaterial color={C.bedGlass} roughness={0.15} metalness={0.4} />
+          </mesh>
+          {/* 床面刻度 */}
+          <gridHelper args={[BED_SIZE, 10, '#2c2f36', '#22252b']} position={[0, 0.602, 0]} />
+          {/* 长尾夹 */}
+          {[[-1.05, -1.05], [1.05, -1.05], [-1.05, 1.05], [1.05, 1.05]].map(([x, z], i) => (
+            <mesh key={i} position={[x, 0.615, z]}>
+              <boxGeometry args={[0.1, 0.03, 0.05]} />
+              {mat('#0c0d10', 0.35, 0.7)}
+            </mesh>
+          ))}
+        </group>
 
       {/* ===== 龙门架（沿 Y 升降） ===== */}
       <group ref={gantry} position={[0, BED_TOP_Y + 0.06 + TIP, 0]}>
@@ -388,8 +381,26 @@ function PrintRig({
         </group>
       </group>
 
-      {/* 把龙门架 ref 传给线缆 */}
-      <Cable gantry={gantry} />
+        {/* 把龙门架 ref 传给线缆 */}
+        <Cable gantry={gantry} />
+      </group>
+
+      {/* ===== 打印产物（随床同步位移；完成后单独保留） ===== */}
+      <group ref={model}>
+        {job && (
+          <instancedMesh
+            key={job.totalVoxels}
+            ref={mesh}
+            args={[undefined, undefined, job.totalVoxels]}
+            castShadow
+            receiveShadow
+            frustumCulled={false}
+          >
+            <boxGeometry args={[1, 1, 1]} />
+            <meshStandardMaterial roughness={0.6} metalness={0.05} />
+          </instancedMesh>
+        )}
+      </group>
     </group>
   )
 }
@@ -524,7 +535,9 @@ export default function MachineScene(props: SceneProps) {
       <pointLight position={[0, 4.6, 2.6]} intensity={1.15} distance={9} color="#ffd9b0" />
       <pointLight position={[0, 0.9, 3.4]} intensity={0.5} color="#ff8a4a" />
 
-      <Frame status={props.status} screen={props.screen} />
+      <group visible={props.status !== 'done'}>
+        <Frame status={props.status} screen={props.screen} />
+      </group>
       <PrintRig {...props} />
       <HoloFrame visible={!props.job && props.status === 'idle'} />
 
@@ -547,7 +560,7 @@ export default function MachineScene(props: SceneProps) {
 
       <OrbitControls
         makeDefault
-        target={[0, 1.4, 0]}
+        target={props.status === 'done' ? [0, PLANE_H / 2, 0] : [0, 1.4, 0]}
         minDistance={2.4}
         maxDistance={10}
         maxPolarAngle={Math.PI * 0.495}
