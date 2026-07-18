@@ -25,6 +25,26 @@ await new Promise((r) => setTimeout(r, 2000))
 const loaded = await page.evaluate(() => document.body.innerText.includes('4/4'))
 console.log('views loaded:', loaded)
 if (!loaded) throw new Error('四视图未完整装载')
+
+const singleSampleClicked = await page.evaluate(() => {
+  const b = [...document.querySelectorAll('button')].find((x) => x.title === '天坛')
+  if (b) { b.click(); return true }
+  return false
+})
+await new Promise((r) => setTimeout(r, 1500))
+const returnedToSingle = await page.evaluate(() => {
+  const plate = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === '平板')
+  return Boolean(plate?.classList.contains('seg-btn-active') && document.querySelector('img[alt="media"]'))
+})
+console.log('single sample clicked:', singleSampleClicked, 'returned to plate:', returnedToSingle)
+if (!singleSampleClicked || !returnedToSingle) throw new Error('多视图无法切回普通示例')
+
+await page.evaluate(() => {
+  const b = [...document.querySelectorAll('button')].find((x) => x.title.includes('四视图套装'))
+  b?.click()
+})
+await new Promise((r) => setTimeout(r, 2000))
+if (!(await page.evaluate(() => document.body.innerText.includes('4/4')))) throw new Error('无法再次进入多视图')
 await page.screenshot({ path: '/tmp/lf-hull-00-panel.png' })
 
 await page.evaluate(() => {
