@@ -94,7 +94,7 @@ function finalize(e: Emit, opts: SliceOptions, N: number, cell: number): PrintJo
     bedSize: opts.bedSize,
     bedTopY: opts.bedTopY,
     planeHeight: opts.planeHeight,
-    filamentMm: ((total * voxelVol) / (Math.PI * 0.875 * 0.875)) * 100, // 1 世界单位 = 100mm
+    filamentMm: (total * voxelVol * 1e6) / (Math.PI * 0.875 * 0.875), // 1 世界单位 = 100mm，体积 ×1e6
     estSeconds: total / BASE_VPS,
   }
 }
