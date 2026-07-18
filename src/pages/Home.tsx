@@ -128,7 +128,7 @@ export default function Home() {
     setLines((prev) => (prev.length > 90 ? [...prev.slice(-70), line] : [...prev, line]))
   }, [])
 
-  /* 载入图片（单图模式；多视图模式下装入正视图槽位） */
+  /* 载入单张图片；从多视图示例返回时自动切回平板模式。 */
   const applyImage = useCallback(
     async (url: string, name: string) => {
       try {
@@ -136,13 +136,7 @@ export default function Home() {
         setJob(null)
         setStatus('idle')
         setProgress({ done: 0, total: 0, layer: 0, layers: 0 })
-        if (mode === 'hull') {
-          viewImgs.current.front = img
-          setViews((v) => ({ ...v, front: { url, name } }))
-          setFileName(name)
-          log(`; 正视图已装载: ${name} (${img.naturalWidth}×${img.naturalHeight})`)
-          return
-        }
+        if (mode === 'hull') setMode('plate')
         imgRef.current = img
         setImageSrc(url)
         setFileName(name)
