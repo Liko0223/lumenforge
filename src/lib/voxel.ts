@@ -415,21 +415,28 @@ export function sliceHull(views: ViewImages, opts: SliceOptions): PrintJob {
       for (let iz = 0; iz < N; iz += g) {
         if (!solidAt(ix, row, iz)) continue
         // 颜色取离当前体素最近的可用投影面，避免整个模型都贴成正视图。
-        let cr = 200, cg = 200, cb = 200
-        const sources: { distance: number; key: ViewKey; index: number }[] = [
-          { distance: N - 1 - iz, key: 'front', index: yImg * N + ix },
-        ]
-        if (pixels.back) sources.push({ distance: iz, key: 'back', index: yImg * N + (N - 1 - ix) })
-        if (pixels.side) sources.push({ distance: Math.min(ix, N - 1 - ix), key: 'side', index: yImg * N + (N - 1 - iz) })
-        if (pixels.top) sources.push({ distance: N - 1 - row, key: 'top', index: iz * N + ix })
-        sources.sort((a, b) => a.distance - b.distance)
-        const source = sources.find(({ key, index }) => {
-          const P = pixels[key]
-          return Boolean(P && P.a[index] >= 96)
-        })
-        if (source) {
-          const P = pixels[source.key]!
-          cr = P.r[source.index]; cg = P.g[source.index]; cb = P.b[source.index]
+        const front = pixels.front!
+        const frontIndex = yImg * N + ix
+        let bestDistance = N - 1 - iz
+        let cr = front.r[frontIndex], cg = front.g[frontIndex], cb = front.b[frontIndex]
+        const back = pixels.back
+        const backIndex = yImg * N + (N - 1 - ix)
+        if (back && back.a[backIndex] >= 96 && iz <= bestDistance) {
+          bestDistance = iz
+          cr = back.r[backIndex]; cg = back.g[backIndex]; cb = back.b[backIndex]
+        }
+        const side = pixels.side
+        const sideIndex = yImg * N + (N - 1 - iz)
+        const sideDistance = Math.min(ix, N - 1 - ix)
+        if (side && side.a[sideIndex] >= 96 && sideDistance <= bestDistance) {
+          bestDistance = sideDistance
+          cr = side.r[sideIndex]; cg = side.g[sideIndex]; cb = side.b[sideIndex]
+        }
+        const top = pixels.top
+        const topIndex = iz * N + ix
+        const topDistance = N - 1 - row
+        if (top && top.a[topIndex] >= 96 && topDistance <= bestDistance) {
+          cr = top.r[topIndex]; cg = top.g[topIndex]; cb = top.b[topIndex]
         }
         pushVoxel(
           e,

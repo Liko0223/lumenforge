@@ -72,6 +72,8 @@ export default function Home() {
   const [views, setViews] = useState<Partial<Record<ViewKey, { url: string; name: string }>>>({})
   const viewImgs = useRef<Partial<Record<ViewKey, HTMLImageElement>>>({})
   const pendingSlot = useRef<ViewKey | 'single'>('single')
+  const hullReady = Boolean(views.front && views.side)
+  const loadedViewCount = VIEW_LABELS.filter(({ key }) => Boolean(views[key])).length
 
   const [job, setJob] = useState<PrintJob | null>(null)
   const [progress, setProgress] = useState({ done: 0, total: 0, layer: 0, layers: 0 })
@@ -109,7 +111,7 @@ export default function Home() {
     const s = screenRef.current
     if (status === 'idle') {
       s.l1 = 'STANDBY'
-      s.l2 = imageSrc ? 'MEDIA LOADED' : 'AWAITING MEDIA'
+      s.l2 = imageSrc || (mode === 'hull' && hullReady) ? 'MEDIA LOADED' : 'AWAITING MEDIA'
       s.pct = 0
     } else if (status === 'slicing') {
       s.l1 = 'SLICING'
@@ -120,7 +122,7 @@ export default function Home() {
       s.l2 = fileName.slice(0, 18).toUpperCase()
       s.pct = 1
     }
-  }, [status, imageSrc, fileName])
+  }, [status, imageSrc, fileName, mode, hullReady])
 
   const log = useCallback((line: string) => {
     setLines((prev) => (prev.length > 90 ? [...prev.slice(-70), line] : [...prev, line]))
@@ -137,6 +139,7 @@ export default function Home() {
         if (mode === 'hull') {
           viewImgs.current.front = img
           setViews((v) => ({ ...v, front: { url, name } }))
+          setFileName(name)
           log(`; 正视图已装载: ${name} (${img.naturalWidth}×${img.naturalHeight})`)
           return
         }
@@ -158,6 +161,7 @@ export default function Home() {
         const img = await loadImage(url)
         viewImgs.current[slot] = img
         setViews((v) => ({ ...v, [slot]: { url, name } }))
+        if (slot === 'front') setFileName(name)
         setJob(null)
         setStatus('idle')
         log(`; ${VIEW_LABELS.find((l) => l.key === slot)?.label}已装载: ${name}`)
@@ -218,8 +222,6 @@ export default function Home() {
   }, [])
 
   /* 开始打印 */
-  const hullReady = Boolean(views.front && views.side)
-  const loadedViewCount = VIEW_LABELS.filter(({ key }) => Boolean(views[key])).length
   const canPrint = mode === 'hull' ? hullReady : Boolean(imageSrc)
 
   const startPrint = useCallback(() => {
@@ -240,13 +242,19 @@ export default function Home() {
         bedTopY: BED_TOP_Y,
         planeHeight: PLANE_HEIGHT,
       }
-      const j = mode === 'hull' ? sliceHull(viewImgs.current, opts) : sliceImage(imgRef.current!, opts)
-      j.name = mode === 'hull' ? 'multi-view' : fileName
-      setJob(j)
-      setProgress({ done: 0, total: j.totalVoxels, layer: 0, layers: j.layers })
-      log(`; 切片完成: ${j.layers} 层 · ${fmt(j.totalVoxels)} 体素 · 耗材 ${(j.filamentMm / 1000).toFixed(2)}m`)
-      log('M106 S255 ; 冷却风扇开启')
-      setStatus('printing')
+      try {
+        const j = mode === 'hull' ? sliceHull(viewImgs.current, opts) : sliceImage(imgRef.current!, opts)
+        if (j.totalVoxels === 0) throw new Error('empty hull')
+        j.name = mode === 'hull' ? 'multi-view' : fileName
+        setJob(j)
+        setProgress({ done: 0, total: j.totalVoxels, layer: 0, layers: j.layers })
+        log(`; 切片完成: ${j.layers} 层 · ${fmt(j.totalVoxels)} 体素 · 耗材 ${(j.filamentMm / 1000).toFixed(2)}m`)
+        log('M106 S255 ; 冷却风扇开启')
+        setStatus('printing')
+      } catch {
+        setStatus('idle')
+        log('; 错误: 视图轮廓没有有效交集，请检查方向、比例和透明背景')
+      }
     }, 1300)
   }, [busy, fileName, resolution, maxDepth, invert, mode, log, hullReady])
 
