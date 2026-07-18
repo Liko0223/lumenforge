@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import MachineScene, { type MachineStatus, type HudScreen } from '../components/MachineScene'
 import Terminal from '../components/Terminal'
 import BootOverlay from '../components/BootOverlay'
-import { sliceImage, loadImage, type PrintJob } from '../lib/voxel'
+import { sliceImage, loadImage, type PrintJob, type FormMode } from '../lib/voxel'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 
@@ -12,6 +12,7 @@ const BED_TOP_Y = 0.6
 const PLANE_HEIGHT = 1.7 // 竖直图像平面高度
 
 const SAMPLES = [
+  { id: 'tiantan', name: '祈年殿', file: 'tiantan.png' },
   { id: 'mountains', name: '山峦', file: 'mountains.png' },
   { id: 'planet', name: '星球', file: 'planet.png' },
   { id: 'seal', name: '印章', file: 'seal.png' },
@@ -36,6 +37,7 @@ export default function Home() {
 
   const [resolution, setResolution] = useState(64)
   const [maxDepth, setMaxDepth] = useState(0.5)
+  const [mode, setMode] = useState<FormMode>('plate')
   const [invert, setInvert] = useState(false)
   const [speed, setSpeed] = useState(1.4)
 
@@ -127,9 +129,10 @@ export default function Home() {
     log('M140 S60  ; 热床 60°C')
     log('M104 S215 ; 喷嘴 215°C')
     log('G28       ; 三轴回零')
-    log(`; 切片中: ${fileName} @ ${resolution}px`)
+    log(`; 切片中: ${fileName} @ ${resolution}px · ${{ plate: '平板浮雕', mirror: '双面镜像', lathe: '旋转成型' }[mode]}`)
     sliceTimer.current = setTimeout(() => {
       const j = sliceImage(imgRef.current!, {
+        mode,
         resolution,
         maxDepth,
         invert,
@@ -144,7 +147,7 @@ export default function Home() {
       log('M106 S255 ; 冷却风扇开启')
       setStatus('printing')
     }, 1300)
-  }, [busy, fileName, resolution, maxDepth, invert, log])
+  }, [busy, fileName, resolution, maxDepth, invert, mode, log])
 
   /* 取消 */
   const cancel = useCallback(() => {
@@ -275,7 +278,7 @@ export default function Home() {
                 <span className="font-mono2 text-[9px] tracking-[0.2em] text-muted-foreground">示例图库 SAMPLES</span>
                 <span className="font-mono2 text-[9px] text-muted-foreground/50">点击即印</span>
               </div>
-              <div className="grid grid-cols-4 gap-1.5">
+              <div className="grid grid-cols-5 gap-1.5">
                 {SAMPLES.map((s) => (
                   <button
                     key={s.id}
@@ -304,6 +307,35 @@ export default function Home() {
 
             <div className="mb-4">
               <div className="flex justify-between mb-1.5">
+                <span className="font-mono2 text-[10px] text-foreground/70">成型模式</span>
+                <span className="font-mono2 text-[9px] text-muted-foreground">
+                  {mode === 'plate' ? '单面竖直浮雕' : mode === 'mirror' ? '前后对称' : '旋转体 360°'}
+                </span>
+              </div>
+              <div className="flex">
+                {([
+                  { id: 'plate', label: '平板' },
+                  { id: 'mirror', label: '双面' },
+                  { id: 'lathe', label: '旋转' },
+                ] as const).map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => setMode(m.id)}
+                    className={`seg-btn flex-1 first:border-r-0 [&:nth-child(2)]:border-r-0 ${mode === m.id ? 'seg-btn-active' : ''}`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              {mode === 'lathe' && (
+                <div className="font-mono2 text-[9px] text-muted-foreground mt-1.5 leading-relaxed">
+                  适合天坛 / 花瓶 / 塔等旋转对称物体，按轮廓扫掠成圆
+                </div>
+              )}
+            </div>
+
+            <div className="mb-4">
+              <div className="flex justify-between mb-1.5">
                 <span className="font-mono2 text-[10px] text-foreground/70">网格精度</span>
                 <span className="font-mono2 text-[10px] text-primary">{resolution}×{resolution}</span>
               </div>
@@ -320,10 +352,12 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="mb-4">
+            <div className={`mb-4 transition-opacity ${mode === 'lathe' ? 'opacity-30 pointer-events-none' : ''}`}>
               <div className="flex justify-between mb-1.5">
                 <span className="font-mono2 text-[10px] text-foreground/70">浮雕深度</span>
-                <span className="font-mono2 text-[10px] text-primary">{Math.round(maxDepth * 100)}mm</span>
+                <span className="font-mono2 text-[10px] text-primary">
+                  {mode === 'lathe' ? '由轮廓决定' : `${Math.round(maxDepth * 100)}mm`}
+                </span>
               </div>
               <Slider value={[maxDepth]} onValueChange={([v]) => setMaxDepth(v)} min={0.25} max={0.75} step={0.05} />
             </div>

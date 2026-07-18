@@ -131,8 +131,44 @@ def contours():
     img.filter(ImageFilter.GaussianBlur(0.6)).save(os.path.join(OUT, "contours.png"))
 
 
+# ---------- 5. 祈年殿（旋转体轮廓，lathe 模式示范） ----------
+def tiantan():
+    img = Image.new("RGB", (S, S))
+    d = ImageDraw.Draw(img)
+    top, bottom = (240, 234, 220), (224, 218, 206)
+    for y in range(S):
+        d.line([(0, y), (S, y)], fill=lerp(top, bottom, y / S))
+
+    roof = (38, 52, 92)      # 琉璃瓦深蓝
+    roof_hi = (56, 74, 124)
+    wall = (148, 52, 44)     # 朱红墙
+    stone = (96, 96, 104)    # 台基
+
+    cx = S / 2
+    # 台基三层
+    for i, (w, h) in enumerate([(520, 26), (470, 24), (420, 22)]):
+        y1 = S - 60 - i * 26
+        d.rectangle([cx - w / 2, y1 - h, cx + w / 2, y1], fill=lerp(stone, (70, 70, 78), i / 3))
+    base_y = S - 60 - 2 * 26
+    # 三层檐（下宽上窄）
+    tiers = [(360, 66), (280, 58), (195, 52)]
+    y = base_y
+    for i, (w, h) in enumerate(tiers):
+        # 檐下墙体
+        d.rectangle([cx - w * 0.31, y - 30, cx + w * 0.31, y], fill=lerp(wall, (110, 40, 36), i / 3))
+        # 屋檐梯形
+        d.polygon([(cx - w / 2, y), (cx - w * 0.31, y - h), (cx + w * 0.31, y - h), (cx + w / 2, y)],
+                  fill=lerp(roof, roof_hi, i / 3))
+        y = y - h - 30
+    # 宝顶
+    d.rectangle([cx - 8, y - 18, cx + 8, y], fill=wall)
+    d.ellipse([cx - 16, y - 52, cx + 16, y - 16], fill=(176, 130, 60))
+    img.filter(ImageFilter.GaussianBlur(0.8)).save(os.path.join(OUT, "tiantan.png"))
+
+
 mountains()
 planet()
 seal()
 contours()
+tiantan()
 print("samples written to", os.path.abspath(OUT))
