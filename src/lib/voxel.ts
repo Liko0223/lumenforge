@@ -17,6 +17,7 @@ export interface PrintJob {
   pz: Float32Array
   colors: Float32Array // 每个体素线性 RGB
   voxelSize: number
+  voxelDepth: number
   layerHeight: number
   bedSize: number
   bedTopY: number
@@ -76,9 +77,9 @@ function pushVoxel(e: Emit, x: number, y: number, z: number, r: number, g: numbe
   e.colors.push(Math.min(1, (r / 255) * boost), Math.min(1, (g / 255) * boost), Math.min(1, (b / 255) * boost))
 }
 
-function finalize(e: Emit, opts: SliceOptions, N: number, cell: number): PrintJob {
+function finalize(e: Emit, opts: SliceOptions, N: number, cell: number, voxelDepth = cell): PrintJob {
   const total = e.px.length
-  const voxelVol = cell * cell * cell
+  const voxelVol = cell * cell * voxelDepth
   return {
     name: '',
     mode: opts.mode,
@@ -90,6 +91,7 @@ function finalize(e: Emit, opts: SliceOptions, N: number, cell: number): PrintJo
     pz: new Float32Array(e.pz),
     colors: new Float32Array(e.colors),
     voxelSize: cell,
+    voxelDepth,
     layerHeight: cell,
     bedSize: opts.bedSize,
     bedTopY: opts.bedTopY,
@@ -120,8 +122,10 @@ function buildPlate(P: ReturnType<typeof extractPixels>, opts: SliceOptions): Pr
   const N = opts.resolution
   const cell = opts.planeHeight / N
   const depthCells = Math.max(4, Math.min(Math.round(opts.maxDepth / cell), Math.floor(MAX_VOXELS / (N * N))))
+  // 预算不足时减少 Z 轴采样层数，但拉伸每层厚度，保持设定的物理深度不变。
+  const depthStep = opts.maxDepth / depthCells
   const depths = depthField(P, N, opts.invert, depthCells)
-  const zBack = (-depthCells * cell) / 2
+  const zBack = -opts.maxDepth / 2
   const e: Emit = { px: [], py: [], pz: [], colors: [] }
 
   for (let row = 0; row < N; row++) {
@@ -137,14 +141,14 @@ function buildPlate(P: ReturnType<typeof extractPixels>, opts: SliceOptions): Pr
           e,
           (x + 0.5) * cell - opts.planeHeight / 2,
           opts.bedTopY + (row + 0.5) * cell,
-          zBack + (z + 0.5) * cell,
+          zBack + (z + 0.5) * depthStep,
           P.r[i], P.g[i], P.b[i],
           1 + (z / depthCells) * 0.14,
         )
       }
     }
   }
-  return finalize(e, opts, N, cell)
+  return finalize(e, opts, N, cell, depthStep)
 }
 
 /* ---- mirror：双面镜像浮雕 ---- */
@@ -152,6 +156,7 @@ function buildMirror(P: ReturnType<typeof extractPixels>, opts: SliceOptions): P
   const N = opts.resolution
   const cell = opts.planeHeight / N
   const depthCells = Math.max(3, Math.min(Math.round(opts.maxDepth / cell), Math.floor(MAX_VOXELS / (2 * N * N))))
+  const depthStep = opts.maxDepth / Math.max(1, depthCells - 0.5)
   const depths = depthField(P, N, opts.invert, depthCells)
   const e: Emit = { px: [], py: [], pz: [], colors: [] }
 
@@ -169,14 +174,14 @@ function buildMirror(P: ReturnType<typeof extractPixels>, opts: SliceOptions): P
           e,
           (x + 0.5) * cell - opts.planeHeight / 2,
           opts.bedTopY + (row + 0.5) * cell,
-          z * cell,
+          z * depthStep,
           P.r[i], P.g[i], P.b[i],
           1 + (Math.abs(z) / depthCells) * 0.12,
         )
       }
     }
   }
-  return finalize(e, opts, N, cell)
+  return finalize(e, opts, N, cell, depthStep)
 }
 
 /* ---- lathe：旋转成型（轮廓半宽绕竖直轴扫掠） ---- */

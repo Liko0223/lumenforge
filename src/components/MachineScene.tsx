@@ -237,7 +237,7 @@ function PrintRig({
         while (idx.current < n) {
           const i = idx.current
           dummy.position.set(job.px[i], job.py[i], job.pz[i])
-          dummy.scale.set(job.voxelSize * 0.94, job.layerHeight, job.voxelSize * 0.94)
+          dummy.scale.set(job.voxelSize * 0.94, job.layerHeight, job.voxelDepth * 0.94)
           dummy.updateMatrix()
           mesh.current.setMatrixAt(i, dummy.matrix)
           idx.current++
@@ -260,7 +260,7 @@ function PrintRig({
         }
         if (idx.current - lastGcode.current > 50) {
           lastGcode.current = idx.current
-          const e = ((idx.current * job.voxelSize * job.voxelSize * job.layerHeight) / 2.405).toFixed(2)
+          const e = ((idx.current * job.voxelSize * job.voxelDepth * job.layerHeight) / 2.405).toFixed(2)
           onLog(`G1 X${job.px[cur].toFixed(2)} Y${job.pz[cur].toFixed(2)} E${e} F${Math.round(speed * 4200)}`)
         }
         if (t - lastReport.current > 0.12) {

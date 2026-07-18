@@ -12,11 +12,11 @@ const BED_TOP_Y = 0.6
 const PLANE_HEIGHT = 1.7 // 竖直图像平面高度
 
 const SAMPLES = [
-  { id: 'tiantan', name: '祈年殿', file: 'tiantan.png' },
-  { id: 'mountains', name: '山峦', file: 'mountains.png' },
-  { id: 'planet', name: '星球', file: 'planet.png' },
-  { id: 'seal', name: '印章', file: 'seal.png' },
-  { id: 'contours', name: '等高线', file: 'contours.png' },
+  { id: 'temple-of-heaven', name: '天坛', file: 'temple-of-heaven.webp' },
+  { id: 'forbidden-city', name: '故宫', file: 'forbidden-city.webp' },
+  { id: 'color-orb', name: '彩色圆盘', file: 'color-orb.webp' },
+  { id: 'japanese-castle', name: '日本城堡', file: 'japanese-castle.webp' },
+  { id: 'notre-dame', name: '巴黎圣母院', file: 'notre-dame.webp' },
 ].map((s) => ({ ...s, url: `${import.meta.env.BASE_URL}samples/${s.file}` }))
 
 function fmt(n: number) {
@@ -360,9 +360,9 @@ export default function Home() {
                 </span>
               </div>
               <Slider value={[maxDepth]} onValueChange={([v]) => setMaxDepth(v)} min={0.2} max={1.4} step={0.05} />
-              {resolution >= 96 && maxDepth > 0.5 && (
+              {resolution >= 64 && maxDepth > 0.5 && (
                 <div className="font-mono2 text-[9px] text-muted-foreground mt-1">
-                  96 精度下深度将受体素预算自动约束
+                  高精度下 Z 轴采样会自动调整，实际深度保持不变
                 </div>
               )}
             </div>
