@@ -9,7 +9,7 @@ import { Switch } from '@/components/ui/switch'
 const RESOLUTIONS = [32, 48, 64, 96]
 const BED_SIZE = 2.3
 const BED_TOP_Y = 0.6
-const MODEL_HEIGHT = 1.15
+const PLANE_HEIGHT = 1.7 // 竖直图像平面高度
 
 const SAMPLES = [
   { id: 'mountains', name: '山峦', file: 'mountains.png' },
@@ -35,7 +35,7 @@ export default function Home() {
   const imgRef = useRef<HTMLImageElement | null>(null)
 
   const [resolution, setResolution] = useState(64)
-  const [maxLayers, setMaxLayers] = useState(28)
+  const [maxDepth, setMaxDepth] = useState(0.5)
   const [invert, setInvert] = useState(false)
   const [speed, setSpeed] = useState(1.4)
 
@@ -131,11 +131,11 @@ export default function Home() {
     sliceTimer.current = setTimeout(() => {
       const j = sliceImage(imgRef.current!, {
         resolution,
-        maxLayers,
+        maxDepth,
         invert,
         bedSize: BED_SIZE,
         bedTopY: BED_TOP_Y,
-        modelHeight: MODEL_HEIGHT,
+        planeHeight: PLANE_HEIGHT,
       })
       j.name = fileName
       setJob(j)
@@ -144,7 +144,7 @@ export default function Home() {
       log('M106 S255 ; 冷却风扇开启')
       setStatus('printing')
     }, 1300)
-  }, [busy, fileName, resolution, maxLayers, invert, log])
+  }, [busy, fileName, resolution, maxDepth, invert, log])
 
   /* 取消 */
   const cancel = useCallback(() => {
@@ -322,10 +322,10 @@ export default function Home() {
 
             <div className="mb-4">
               <div className="flex justify-between mb-1.5">
-                <span className="font-mono2 text-[10px] text-foreground/70">浮雕层数</span>
-                <span className="font-mono2 text-[10px] text-primary">{maxLayers} 层</span>
+                <span className="font-mono2 text-[10px] text-foreground/70">浮雕深度</span>
+                <span className="font-mono2 text-[10px] text-primary">{Math.round(maxDepth * 100)}mm</span>
               </div>
-              <Slider value={[maxLayers]} onValueChange={([v]) => setMaxLayers(v)} min={14} max={40} step={1} />
+              <Slider value={[maxDepth]} onValueChange={([v]) => setMaxDepth(v)} min={0.25} max={0.75} step={0.05} />
             </div>
 
             <div className="mb-4">
@@ -414,7 +414,7 @@ export default function Home() {
               <span className="font-mono2 text-[10px] tracking-[0.2em] text-foreground/70">CAM-01 · LIVE</span>
             </div>
             <div className="absolute top-3 right-3 font-mono2 text-[10px] tracking-[0.2em] text-muted-foreground pointer-events-none text-right">
-              <div>BUILD {Math.round(BED_SIZE * 100)}×{Math.round(BED_SIZE * 100)}×{Math.round(MODEL_HEIGHT * 100)}mm</div>
+              <div>PLATE {Math.round(PLANE_HEIGHT * 100)}×{Math.round(PLANE_HEIGHT * 100)}mm</div>
               <div className="mt-0.5">NOZZLE 0.4 · PLA</div>
             </div>
             <div className="absolute bottom-3 left-3 font-mono2 text-[10px] text-muted-foreground/70 pointer-events-none">
@@ -427,7 +427,7 @@ export default function Home() {
               <div className="absolute inset-0 bg-background/50 backdrop-blur-[2px] grid place-items-center">
                 <div className="text-center rise-in">
                   <div className="font-mono2 text-[12px] tracking-[0.4em] text-primary">SLICING</div>
-                  <div className="font-mono2 text-[10px] text-muted-foreground mt-2 tracking-widest">正在生成 {maxLayers} 层沉积路径…</div>
+                  <div className="font-mono2 text-[10px] text-muted-foreground mt-2 tracking-widest">正在生成 {resolution} 行沉积路径…</div>
                 </div>
               </div>
             )}

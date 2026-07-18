@@ -25,7 +25,7 @@ interface SceneProps {
 
 const BED_SIZE = 2.3
 const BED_TOP_Y = 0.6
-const MODEL_HEIGHT = 1.15
+const PLANE_H = 1.7 // 竖直图像平面高度
 const TIP = 0.34 // 喷头顶点到龙门架原点的距离
 const BASE_VPS = 240
 
@@ -276,7 +276,7 @@ function PrintRig({
         }
       } else {
         // done：抬升归位
-        targetGantryY = BED_TOP_Y + MODEL_HEIGHT + 0.3 + TIP
+        targetGantryY = BED_TOP_Y + PLANE_H + 0.12 + TIP
       }
     }
 
@@ -472,22 +472,20 @@ function Frame({ status, screen }: { status: MachineStatus; screen: HudScreen })
   )
 }
 
-/* ---------------- 待机全息框 ---------------- */
+/* ---------------- 待机全息框（竖直平板轮廓） ---------------- */
 function HoloFrame({ visible }: { visible: boolean }) {
   const g = useRef<THREE.Group>(null!)
   useFrame(({ clock }) => {
     if (!g.current) return
     const t = clock.elapsedTime
-    g.current.position.y = BED_TOP_Y + 0.45 + Math.sin(t * 1.4) * 0.05
-    g.current.rotation.y = t * 0.35
-    const s = 1 + Math.sin(t * 2.2) * 0.015
-    g.current.scale.set(s, 1, s)
+    g.current.position.y = BED_TOP_Y + PLANE_H / 2 + Math.sin(t * 1.4) * 0.04
+    g.current.rotation.y = Math.sin(t * 0.4) * 0.08
   })
   if (!visible) return null
   return (
     <group ref={g}>
       <mesh>
-        <boxGeometry args={[1.5, 0.8, 1.5]} />
+        <boxGeometry args={[PLANE_H, PLANE_H, 0.42]} />
         <meshStandardMaterial color={C.accent} transparent opacity={0.04} depthWrite={false} />
         <Edges scale={1.001} color={C.accent} />
       </mesh>
@@ -549,7 +547,7 @@ export default function MachineScene(props: SceneProps) {
 
       <OrbitControls
         makeDefault
-        target={[0, 1.2, 0]}
+        target={[0, 1.4, 0]}
         minDistance={2.4}
         maxDistance={10}
         maxPolarAngle={Math.PI * 0.495}
