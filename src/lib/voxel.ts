@@ -38,6 +38,7 @@ export interface SliceOptions {
 
 const MAX_VOXELS = 170_000
 const BASE_VPS = 240 // speed=1 时每秒沉积体素数
+const MIRROR_CORE_DEPTH_RATIO = 0.72
 
 /* 共享：把图片 cover 裁剪到 N×N 并读出像素 */
 function extractPixels(img: HTMLImageElement, N: number) {
@@ -102,7 +103,7 @@ function finalize(e: Emit, opts: SliceOptions, N: number, cell: number, voxelDep
 }
 
 /* 明暗 → 深度等级（1..depthCells） */
-function depthField(P: ReturnType<typeof extractPixels>, N: number, invert: boolean, depthCells: number) {
+function depthField(P: ReturnType<typeof extractPixels>, N: number, invert: boolean, depthCells: number, baseDepthRatio = 0) {
   const depths = new Uint8Array(N * N)
   for (let i = 0; i < N * N; i++) {
     if (P.a[i] < 100) {
@@ -112,7 +113,9 @@ function depthField(P: ReturnType<typeof extractPixels>, N: number, invert: bool
     const lum = (0.2126 * P.r[i] + 0.7152 * P.g[i] + 0.0722 * P.b[i]) / 255
     let h = invert ? lum : 1 - lum
     h = Math.pow(h, 1.3)
-    depths[i] = Math.max(1, Math.round(h * depthCells))
+    const normalizedDepth = baseDepthRatio + h * (1 - baseDepthRatio)
+    const sampledDepth = normalizedDepth * depthCells
+    depths[i] = Math.max(1, baseDepthRatio > 0 ? Math.ceil(sampledDepth) : Math.round(sampledDepth))
   }
   return depths
 }
@@ -157,7 +160,8 @@ function buildMirror(P: ReturnType<typeof extractPixels>, opts: SliceOptions): P
   const cell = opts.planeHeight / N
   const depthCells = Math.max(3, Math.min(Math.round(opts.maxDepth / cell), Math.floor(MAX_VOXELS / (2 * N * N))))
   const depthStep = opts.maxDepth / Math.max(1, depthCells - 0.5)
-  const depths = depthField(P, N, opts.invert, depthCells)
+  // 双面模型先保留稳定核心厚度，明暗只控制靠近表面的起伏。
+  const depths = depthField(P, N, opts.invert, depthCells, MIRROR_CORE_DEPTH_RATIO)
   const e: Emit = { px: [], py: [], pz: [], colors: [] }
 
   for (let row = 0; row < N; row++) {

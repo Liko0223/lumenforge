@@ -332,6 +332,11 @@ export default function Home() {
                   适合天坛 / 花瓶 / 塔等旋转对称物体，按轮廓扫掠成圆
                 </div>
               )}
+              {mode === 'mirror' && (
+                <div className="font-mono2 text-[9px] text-muted-foreground mt-1.5 leading-relaxed">
+                  保留主体核心厚度，明暗仅调节双侧表面起伏
+                </div>
+              )}
             </div>
 
             <div className="mb-4">
